@@ -23,78 +23,53 @@ public class OptimizeAdaptionHistoryEventProducer extends CacheAwareHistoryEvent
 
   // two years, one year, six month, one month, last week, yesterday
 
-  private Date calculateDateForOneYearFromNow() {
-    long desiredStandardDeviation = 2 * months;
-    long desiredMean = 1 * years;
-    long desired = Math.round(random.nextGaussian()*desiredStandardDeviation)+desiredMean;
-    desired = Math.max(desired, -desiredMean);
-    long now = new Date().getTime();
-    return new Date(now - desired);
+  private long calculateDateDistribution(long mean, long deviation) {
+    return Math.abs(Math.round(random.nextGaussian() * deviation) + mean);
   }
 
-  private Date calculateDateForSixMonthFromNow() {
-    long desiredStandardDeviation = 1 * weeks;
-    long desiredMean = 6 * months;
-    long desired = Math.round(random.nextGaussian()*desiredStandardDeviation)+desiredMean;
-    desired = Math.max(desired, -desiredMean);
-    long now = new Date().getTime();
-    return new Date(now - desired);
+  private int chooseBucketWhenToCreateDayOfYear() {
+    double bucket = random.nextDouble();
+    if (bucket <= 0.35) {
+      return 0;
+    } else if (bucket <= 0.85) {
+      return 1;
+    } else {
+      return 2;
+    }
   }
 
-  private Date calculateDateForOneMonthFromNow() {
-    long desiredStandardDeviation =  1 * weeks;
-    long desiredMean = 1 * months;
-    long desired = Math.round(random.nextGaussian()*desiredStandardDeviation)+desiredMean;
-    desired = Math.max(desired, -1*months);
-    long now = new Date().getTime();
-    return new Date(now - desired);
+  private long drawSpringNormalDistributionSample() {
+    return Math.abs(calculateDateDistribution(104, 50));
   }
 
-  private Date calculateDateForLastWeek() {
-    long desiredStandardDeviation = 2 * days;
-    long desiredMean = 1*weeks;
-    long desired = Math.round(random.nextGaussian()*desiredStandardDeviation)+desiredMean;
-    desired = Math.max(desired, -1*weeks);
-    long now = new Date().getTime();
-    return new Date(now - desired);
+  private long drawFallNormalDistributionSample() {
+    // TODO: wenn drüber dann gleichverteilung
+    return Math.min(Math.abs(calculateDateDistribution(287, 50)), 365);
   }
 
-  private Date calculateDateForYesterday() {
-    long desiredStandardDeviation = 1 * days;
-    long desiredMean = 1 * days;
-    long desired = Math.round(random.nextGaussian()*desiredStandardDeviation)+desiredMean;
-    desired = Math.abs(desired);
-    long now = new Date().getTime();
-    return new Date(now - desired);
+  private long drawEqualDistribution() {
+    return random.nextInt(365) + 1;
   }
 
-  private int chooseBucketWhenToCreateStartDate() {
-    int bucket = random.nextInt(5);
-    return bucket;
-  }
-
-  private Date drawStartDateFromDistribution() {
-    int bucket = chooseBucketWhenToCreateStartDate();
+  private long drawDayOfYearFromDistribution() {
+    int bucket = chooseBucketWhenToCreateDayOfYear();
     switch (bucket) {
       case 0:
-        return calculateDateForOneYearFromNow();
+        return drawSpringNormalDistributionSample();
       case 1:
-        return calculateDateForSixMonthFromNow();
+        return drawFallNormalDistributionSample();
       case 2:
-        return calculateDateForOneMonthFromNow();
-      case 3:
-        return calculateDateForLastWeek();
-      case 4:
-        return calculateDateForYesterday();
+        return drawEqualDistribution();
     }
-    return new Date();
+    return 0;
   }
 
   @Override
   public HistoryEvent createProcessInstanceStartEvt(DelegateExecution execution) {
     HistoricProcessInstanceEventEntity event =
       (HistoricProcessInstanceEventEntity) super.createProcessInstanceStartEvt(execution);
-    event.setStartTime(drawStartDateFromDistribution());
+    Date startTime = DateConverter.convertToDateOfCurrentYear(drawDayOfYearFromDistribution());
+    event.setStartTime(startTime);
     return event;
   }
 
@@ -106,7 +81,6 @@ public class OptimizeAdaptionHistoryEventProducer extends CacheAwareHistoryEvent
     if(execution.getVariable(taskId) != null) {
       Long duration = (Long) execution.getVariable(taskId);
       event.setDurationInMillis(duration);
-      execution.removeVariable(taskId);
     }
     return event;
   }
