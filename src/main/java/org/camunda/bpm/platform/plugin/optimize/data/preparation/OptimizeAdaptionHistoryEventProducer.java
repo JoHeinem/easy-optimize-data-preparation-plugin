@@ -1,13 +1,21 @@
 package org.camunda.bpm.platform.plugin.optimize.data.preparation;
 
+import org.camunda.bpm.engine.HistoryService;
 import org.camunda.bpm.engine.delegate.DelegateExecution;
+import org.camunda.bpm.engine.history.HistoricActivityInstance;
+import org.camunda.bpm.engine.history.HistoricProcessInstance;
 import org.camunda.bpm.engine.impl.history.event.HistoricActivityInstanceEventEntity;
 import org.camunda.bpm.engine.impl.history.event.HistoricProcessInstanceEventEntity;
 import org.camunda.bpm.engine.impl.history.event.HistoryEvent;
 import org.camunda.bpm.engine.impl.history.producer.CacheAwareHistoryEventProducer;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Date;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.Random;
+import java.util.Set;
 
 public class OptimizeAdaptionHistoryEventProducer extends CacheAwareHistoryEventProducer {
 
@@ -21,7 +29,19 @@ public class OptimizeAdaptionHistoryEventProducer extends CacheAwareHistoryEvent
   private long months = 30 * days;
   private long years = 12 * months;
 
-  // two years, one year, six month, one month, last week, yesterday
+  // Assumption: we only create 4500 process instances
+  private final int processInstanceCount = 4500;
+  private LinkedList<Date> dateDistribution = createSortedStartDateDistribution();
+
+  private LinkedList<Date> createSortedStartDateDistribution() {
+    LinkedList<Date> dateDistribution = new LinkedList<Date>();
+    for(int i=0; i< processInstanceCount; i++){
+      dateDistribution.addLast(drawStartDateFromDistribution());
+    }
+    Collections.sort(dateDistribution);
+    return dateDistribution;
+  }
+
 
   private Date calculateDateForOneYearFromNow() {
     long desiredStandardDeviation = 2 * months;
@@ -94,7 +114,59 @@ public class OptimizeAdaptionHistoryEventProducer extends CacheAwareHistoryEvent
   public HistoryEvent createProcessInstanceStartEvt(DelegateExecution execution) {
     HistoricProcessInstanceEventEntity event =
       (HistoricProcessInstanceEventEntity) super.createProcessInstanceStartEvt(execution);
-    event.setStartTime(drawStartDateFromDistribution());
+    Date startDate = dateDistribution.isEmpty()? new Date(): dateDistribution.removeFirst();
+    event.setStartTime(startDate);
+    return event;
+  }
+
+  private Date getEndTime(DelegateExecution execution) {
+	  HistoryService historyService = execution.getProcessEngineServices().getHistoryService();
+	  List<HistoricActivityInstance> activityInstances = historyService.createHistoricActivityInstanceQuery()
+			  .processInstanceId(execution.getProcessInstanceId()).list();
+	  long duration = 0;
+	  for (HistoricActivityInstance activityInstance : activityInstances) {
+		  if (activityInstance.getDurationInMillis() == null) {
+			 Date start = activityInstance.getStartTime();
+			 Date end = activityInstance.getEndTime();
+			 if (end != null) {
+				 duration += (end.getTime() - start.getTime());
+			 }
+		 } else {
+			 duration += activityInstance.getDurationInMillis();
+		 }
+	  }
+	  HistoricProcessInstance processInstance = historyService
+			  	.createHistoricProcessInstanceQuery()
+			  	.processInstanceId(execution.getProcessInstanceId())
+			  	.singleResult();
+	  if (processInstance != null) {
+		  Date startTime = processInstance.getStartTime();
+		  return new Date(startTime.getTime() + duration);
+	  } else {
+		  return new Date();
+	  }
+  }
+
+  @Override
+  public HistoryEvent createProcessInstanceEndEvt(DelegateExecution execution) {
+	  HistoricProcessInstanceEventEntity event =
+      (HistoricProcessInstanceEventEntity) super.createProcessInstanceEndEvt(execution);
+
+	boolean executeEndTime = false;
+
+    Set<String> names = execution.getVariableNames();
+    for (String name : names ) {
+    		if (name.contains("Task_")) {
+    			execution.removeVariable(name);
+    			executeEndTime = true;
+    		}
+    }
+
+    if (executeEndTime) {
+    		//setting end time
+    		event.setEndTime(getEndTime(execution));
+    }
+
     return event;
   }
 
